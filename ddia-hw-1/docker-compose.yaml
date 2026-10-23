@@ -1,0 +1,76 @@
+name: ddia-hw1
+
+x-app: &app
+  build: ./app
+x-app-env: &app-env
+  DEPLOYMENT_NAME: orders-service
+  FAULT_RATE: "0.05"
+
+services:
+  app-dc1-pod0:
+    <<: *app
+    environment: {<<: *app-env, DATACENTER: dc1, POD_ID: "0"}
+    ports: ["8081:8000"]
+
+  app-dc1-pod1:
+    <<: *app
+    environment: {<<: *app-env, DATACENTER: dc1, POD_ID: "1"}
+    ports: ["8082:8000"]
+
+  app-dc2-pod0:
+    <<: *app
+    environment: {<<: *app-env, DATACENTER: dc2, POD_ID: "0"}
+    ports: ["8083:8000"]
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.154.1
+    command: ["-promscrape.config=/etc/vm/scrape.yml"]
+    volumes: ["./victoriametrics/scrape.yml:/etc/vm/scrape.yml:ro"]
+    ports: ["8428:8428"]
+
+  grafana:
+    image: grafana/grafana:11.6.16
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+    secrets: [grafana_admin_password]
+    volumes: ["./grafana/provisioning:/etc/grafana/provisioning:ro"]
+    ports: ["3000:3000"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 2s
+      retries: 30
+
+  grafana-init:
+    image: python:3.13-alpine
+    depends_on:
+      grafana: {condition: service_healthy}
+    secrets: [grafana_admin_password]
+    volumes:
+      - ./grafana-init/create_sa_token.py:/srv/create_sa_token.py:ro
+      - grafana-sa-token:/run/grafana-sa
+    command: ["python", "/srv/create_sa_token.py"]
+
+  dashboard-generator:
+    build: ./generator
+    depends_on:
+      app-dc1-pod0: {condition: service_healthy}
+      grafana-init: {condition: service_completed_successfully}
+    environment:
+      TARGET_URL: http://app-dc1-pod0:8000
+    volumes: ["grafana-sa-token:/run/grafana-sa:ro"]
+
+  loadgen:
+    image: grafana/k6:2.3.0
+    depends_on:
+      dashboard-generator: {condition: service_completed_successfully}
+    environment:
+      TARGET_URLS: http://app-dc1-pod0:8000,http://app-dc1-pod1:8000,http://app-dc2-pod0:8000
+    volumes: ["./loadgen:/scripts:ro"]
+    command: ["run", "/scripts/load.js"]
+
+secrets:
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password.txt
+
+volumes:
+  grafana-sa-token:
