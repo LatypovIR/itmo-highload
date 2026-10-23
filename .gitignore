@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# HW1: local secrets
+secrets/*
+!secrets/.gitkeep

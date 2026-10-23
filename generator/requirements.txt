@@ -1,0 +1,2 @@
+# Версия SDK соответствует grafana/grafana:11.6.x из docker-compose.yaml.
+grafana-foundation-sdk==1769699379!11.6.0
